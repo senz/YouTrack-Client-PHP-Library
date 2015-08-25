@@ -285,6 +285,61 @@ class Connection {
     return $this->_request_xml('PUT', '/import/users', $xml, 400);
   }
 
+  public function import_issues_bulk($project, array $issues, $assignee_group = '', $test = false) {
+    $params = ['test' => $test ? 'true' : 'false'];
+    if ($assignee_group) $params['assigneeGroup'] = $assignee_group;
+    $params = http_build_query($params);
+
+    $xml = new \DOMDocument('1.0', 'utf-8');
+    $xml->substituteEntities = true;
+    $xml->xmlStandalone = true;
+    $xml->formatOutput = true;
+    $xmlIssues = $xml->createElement('issues');
+
+    $errors = [];
+    $res = [];
+
+    foreach ($issues as $issue) {
+      if (!is_array($issue)) continue;
+      try {
+        $res[] = $this->create_issue($project, $issue['summary'], $issue);
+      } catch (\Exception $e) {
+        $errors[] = $e;
+      }
+
+      continue;
+      $xmlIssue = $xml->createElement('issue');
+
+      foreach ($issue as $name => $value) {
+        $field = $xml->createElement("field");
+        $field->setAttribute("name", strip_tags($name));
+
+        if (!is_array($value)) {
+          $value = [$value];
+        }
+
+        foreach ($value as $v) {
+          $valueXml = $xml->createElement("value");
+          $text = $xml->createTextNode($v);
+          $valueXml->appendChild($text);
+          $field->appendChild($valueXml);
+        }
+        $xmlIssue->appendChild($field);
+      }
+      $xmlIssues->appendChild($xmlIssue);
+    }
+    return ['errors' => $errors, 'ok' => $res];
+    $xml->appendChild($xmlIssues);
+
+    $xmlValid = $xml->schemaValidate(__DIR__ . "/issue.xsd");
+    if (!$xmlValid) {
+      throw new \Exception("XML is not valid: " . libxml_get_errors());
+    }
+
+    $body = $xml->saveXML();
+//    return $this->_request_xml('PUT', "/import/$project/issues?$params", $body);
+  }
+
   public function import_issues_xml($project_id, $assignee_group, $xml) {
     $issues = $xml;
     $issue_count = 0;
@@ -302,7 +357,7 @@ class Connection {
         'assignee' => $issues_array[$issue_count]['assignee'],
         'summary' => $issues_array[$issue_count]['summary'],
         'description' => $issues_array[$issue_count]['description'],
-        'priority' => $issues_array[$issue_ciount]['Priority'],
+        'priority' => $issues_array[$issue_count]['Priority'],
         'type' => $issues_array[$issue_count]['Type'],
         'subsystem' => $issues_array[$issue_count]['Subsystem'],
         'state' => $issues_array[$issue_count]['State'],
@@ -312,7 +367,7 @@ class Connection {
         ));
       $issue_count++;
     }
-    /** 
+    /**
      * This method has been structured to easily support the debugging of
      * your xml files. To do so simply output the $issues_array with your own
      * methods.
@@ -329,6 +384,15 @@ class Connection {
 
   public function get_project($project_id) {
     return new Project($this->_get('/admin/project/'. urlencode($project_id)));
+  }
+
+  public function get_projects() {
+    $xml = $this->_get('/admin/project/');
+    $projects = [];
+    foreach ($xml->children() as $project) {
+      $projects[] = new Project(new \SimpleXMLElement($project->asXML()));
+    }
+    return $projects;
   }
 
   public function get_project_assignee_groups($project_id) {
